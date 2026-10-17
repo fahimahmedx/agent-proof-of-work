@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomInt, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   PASS_HEADER,
@@ -14,6 +14,19 @@ export * from "./protocol.ts";
 
 export const DEFAULT_PROMPT = "Tell me about yourself.";
 
+/** A question the server knows the answer to, asked alongside the real prompt. */
+export interface ControlQuestion {
+  question: string;
+  answer: string;
+}
+
+/** Default control question: a random single-digit addition, e.g. "What is 1 + 1?". */
+export function additionQuestion(): ControlQuestion {
+  const a = randomInt(1, 10);
+  const b = randomInt(1, 10);
+  return { question: `What is ${a} + ${b}? Reply with only the number.`, answer: String(a + b) };
+}
+
 /** A completed unit of work: the LLM request and the agent's answer. */
 export interface Work {
   challengeId: string;
@@ -28,6 +41,8 @@ export interface WorkGateOptions {
   secret: string;
   /** The LLM request agents must answer. Can vary per request. */
   prompt?: string | ((req: IncomingMessage) => string | Promise<string>);
+  /** Generates the control question. Defaults to a random single-digit addition. */
+  control?: (req: IncomingMessage) => ControlQuestion | Promise<ControlQuestion>;
   minChars?: number;
   maxChars?: number;
   challengeTtlSeconds?: number;
@@ -43,6 +58,9 @@ interface ChallengePayload {
   typ: "challenge";
   id: string;
   prompt: string;
+  control: string;
+  /** HMAC of the expected control answer, so the token doesn't reveal it. */
+  controlHash: string;
   minChars: number;
   maxChars: number;
   exp: number;
@@ -57,6 +75,8 @@ interface PassPayload {
 type Next = (err?: unknown) => void;
 
 const now = () => Math.floor(Date.now() / 1000);
+// Control answers are compared by their final word or number, so "3 + 4 = 7" and "The answer is 7." both match "7".
+const normalizeAnswer = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g)?.at(-1) ?? "";
 
 /**
  * Connect/Express middleware that blocks every request until the caller has answered an LLM prompt.
@@ -66,6 +86,7 @@ export function workGate(options: WorkGateOptions) {
   const {
     secret,
     prompt = DEFAULT_PROMPT,
+    control = additionQuestion,
     minChars = 50,
     maxChars = 4000,
     challengeTtlSeconds = 300,
@@ -77,6 +98,12 @@ export function workGate(options: WorkGateOptions) {
 
   // Challenge ids that were already redeemed, with their expiry, to stop proof replay.
   const redeemed = new Map<string, number>();
+  const redeem = (challenge: ChallengePayload) => {
+    for (const [id, exp] of redeemed) if (exp <= now()) redeemed.delete(id);
+    redeemed.set(challenge.id, challenge.exp);
+  };
+  const controlHash = (challengeId: string, answer: string) =>
+    createHmac("sha256", secret).update(`${challengeId}:${normalizeAnswer(answer)}`).digest("base64url");
 
   async function checkProof(header: string, resource: string): Promise<Work | string> {
     const proof = decodeProof(header);
@@ -85,6 +112,11 @@ export function workGate(options: WorkGateOptions) {
     if (challenge?.typ !== "challenge") return "Invalid challenge signature.";
     if (challenge.exp <= now()) return "Challenge expired.";
     if (redeemed.has(challenge.id)) return "Challenge already redeemed.";
+    if (controlHash(challenge.id, proof.controlAnswer) !== challenge.controlHash) {
+      // Burn the challenge so the control answer can't be guessed by retrying.
+      redeem(challenge);
+      return "Wrong control answer.";
+    }
 
     const response = proof.response.trim();
     if (response.length < challenge.minChars) return `Response shorter than ${challenge.minChars} characters.`;
@@ -93,8 +125,7 @@ export function workGate(options: WorkGateOptions) {
     const work: Work = { challengeId: challenge.id, prompt: challenge.prompt, response, resource };
     if (verify && !(await verify(work))) return "Response rejected by verifier.";
 
-    for (const [id, exp] of redeemed) if (exp <= now()) redeemed.delete(id);
-    redeemed.set(challenge.id, challenge.exp);
+    redeem(challenge);
     return work;
   }
 
@@ -121,10 +152,14 @@ export function workGate(options: WorkGateOptions) {
         error = result;
       }
 
+      const id = randomUUID();
+      const { question, answer } = await control(req);
       const challenge: ChallengePayload = {
         typ: "challenge",
-        id: randomUUID(),
+        id,
         prompt: typeof prompt === "function" ? await prompt(req) : prompt,
+        control: question,
+        controlHash: controlHash(id, answer),
         minChars,
         maxChars,
         exp: now() + challengeTtlSeconds,
@@ -132,14 +167,16 @@ export function workGate(options: WorkGateOptions) {
       const body: WorkRequired = {
         protocol: PROTOCOL,
         prompt: challenge.prompt,
+        control: question,
         challenge: signToken(challenge, secret),
         minChars,
         maxChars,
         expiresAt: challenge.exp,
         ...(error && { error }),
         instructions:
-          `Access requires work. Answer "prompt" with an LLM (${minChars}-${maxChars} characters), then retry ` +
-          `the same request with header ${WORK_HEADER}: base64url(JSON.stringify({ challenge, response })). ` +
+          `Access requires work. Answer "prompt" with an LLM (${minChars}-${maxChars} characters) and answer ` +
+          `"control", then retry the same request with header ` +
+          `${WORK_HEADER}: base64url(JSON.stringify({ challenge, response, controlAnswer })). ` +
           `Send the ${PASS_HEADER} response header back on later requests to skip new work until it expires.`,
       };
       res.statusCode = 402;

@@ -2,12 +2,12 @@ import { PASS_HEADER, PROTOCOL, WORK_HEADER, encodeProof, type WorkRequired } fr
 
 export * from "./protocol.ts";
 
-/** Answers the site's LLM request. This is where the agent spends its compute. */
+/** Answers one of the site's questions (the prompt or the control question). This is where the agent spends its compute. */
 export type Solver = (prompt: string, challenge: WorkRequired) => Promise<string>;
 
 /**
  * Wraps fetch so that HTTP 402 work challenges are solved automatically:
- * the agent answers the prompt, retries with the proof, and reuses the returned pass per origin.
+ * the agent answers the prompt and the control question, retries with the proof, and reuses the returned pass per origin.
  * Request bodies must be replayable (string, URLSearchParams, etc.), since a challenged request is sent twice.
  */
 export function withWork(solve: Solver, baseFetch: typeof fetch = fetch) {
@@ -20,15 +20,16 @@ export function withWork(solve: Solver, baseFetch: typeof fetch = fetch) {
     if (pass) headers.set(PASS_HEADER, pass);
 
     let res = await baseFetch(input, { ...init, headers });
-    if (res.status === 402) {
+    // A rejected proof comes back as a new 402 challenge; retry a few times in case the LLM slipped up.
+    for (let attempt = 0; attempt < 3 && res.status === 402; attempt++) {
       const body = (await res.clone().json().catch(() => null)) as WorkRequired | null;
-      if (body?.protocol === PROTOCOL) {
-        passes.delete(origin);
-        headers.delete(PASS_HEADER);
-        const response = await solve(body.prompt, body);
-        headers.set(WORK_HEADER, encodeProof({ challenge: body.challenge, response }));
-        res = await baseFetch(input, { ...init, headers });
-      }
+      if (body?.protocol !== PROTOCOL) break;
+      passes.delete(origin);
+      headers.delete(PASS_HEADER);
+      const response = await solve(body.prompt, body);
+      const controlAnswer = await solve(body.control, body);
+      headers.set(WORK_HEADER, encodeProof({ challenge: body.challenge, response, controlAnswer }));
+      res = await baseFetch(input, { ...init, headers });
     }
 
     const newPass = res.headers.get(PASS_HEADER);

@@ -1,8 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const PROTOCOL = "agent-proof-of-work/0.1";
+export const PROTOCOL = "agent-proof-of-work/0.2";
 
-/** Request header carrying the solved work: base64url(JSON.stringify({ challenge, response })). */
+/** Request header carrying the solved work: base64url(JSON.stringify({ challenge, response, controlAnswer })). */
 export const WORK_HEADER = "X-Work";
 /** Response header carrying an access pass after valid work; clients send it back to skip new work. */
 export const PASS_HEADER = "X-Work-Pass";
@@ -12,6 +12,8 @@ export interface WorkRequired {
   protocol: typeof PROTOCOL;
   /** The LLM request the agent must answer. */
   prompt: string;
+  /** Control question with an answer the server already knows. A correct answer vouches for the work. */
+  control: string;
   /** Signed, opaque challenge token. Send it back unchanged in the proof. */
   challenge: string;
   minChars: number;
@@ -26,6 +28,7 @@ export interface WorkRequired {
 export interface WorkProof {
   challenge: string;
   response: string;
+  controlAnswer: string;
 }
 
 export function encodeProof(proof: WorkProof): string {
@@ -35,7 +38,7 @@ export function encodeProof(proof: WorkProof): string {
 export function decodeProof(header: string): WorkProof | null {
   try {
     const proof = JSON.parse(Buffer.from(header, "base64url").toString());
-    if (typeof proof?.challenge !== "string" || typeof proof?.response !== "string") return null;
+    if ([proof?.challenge, proof?.response, proof?.controlAnswer].some((v) => typeof v !== "string")) return null;
     return proof;
   } catch {
     return null;

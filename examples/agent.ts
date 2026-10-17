@@ -19,9 +19,12 @@ const openAiSolver: Solver = async (prompt) => {
   return data.choices[0].message.content;
 };
 
+let localModel: Promise<any> | undefined;
 const localSolver: Solver = async (prompt) => {
-  const { pipeline } = await import("@huggingface/transformers");
-  const generate = await pipeline("text-generation", "HuggingFaceTB/SmolLM2-360M-Instruct", { dtype: "q4" });
+  localModel ??= import("@huggingface/transformers").then(({ pipeline }) =>
+    pipeline("text-generation", "HuggingFaceTB/SmolLM2-360M-Instruct", { dtype: "q4" }),
+  );
+  const generate = await localModel;
   const [output] = (await generate([{ role: "user", content: prompt }], { max_new_tokens: 200 })) as any;
   return output.generated_text.at(-1).content;
 };
