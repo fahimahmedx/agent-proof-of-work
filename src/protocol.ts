@@ -4,12 +4,17 @@ export const PROTOCOL = "agent-proof-of-work/0.2";
 
 /** Request header carrying the solved work: base64url(JSON.stringify({ challenge, response, controlAnswer })). */
 export const WORK_HEADER = "X-Work";
-/** Response header carrying an access pass after valid work; clients send it back to skip new work. */
+/**
+ * Response header carrying an access pass after valid work. Clients send their passes back
+ * (comma-separated if they hold several) to skip new work.
+ */
 export const PASS_HEADER = "X-Work-Pass";
 
 /** Body of the HTTP 402 response that asks the agent to do work. */
 export interface WorkRequired {
   protocol: typeof PROTOCOL;
+  /** Unique challenge id. Tasks can ask the agent to reference it, e.g. in a pull request description. */
+  id: string;
   /** The LLM request the agent must answer. */
   prompt: string;
   /** Control question with an answer the server already knows. A correct answer vouches for the work. */

@@ -48,8 +48,13 @@ export interface WorkGateOptions {
   challengeTtlSeconds?: number;
   /** How long one unit of work grants access. Set to 0 to require work on every request. */
   passTtlSeconds?: number;
-  /** Extra check on the answer, e.g. an LLM judge. Return false to reject. */
-  verify?: (work: Work) => boolean | Promise<boolean>;
+  /**
+   * What a pass unlocks: every route behind this gate ("site"), or only the path the work was done for ("resource").
+   * Use a different secret for each gate, or passes from one gate will unlock the other.
+   */
+  passScope?: "site" | "resource";
+  /** Extra check on the answer, e.g. an LLM judge. Return false, or a reason string, to reject. */
+  verify?: (work: Work) => boolean | string | Promise<boolean | string>;
   /** Receives every accepted unit of work. This is what the site gets paid with. */
   onWork?: (work: Work) => void | Promise<void>;
 }
@@ -70,6 +75,8 @@ interface PassPayload {
   typ: "pass";
   sub: string;
   exp: number;
+  /** Set for resource-scoped passes: the only path this pass unlocks. */
+  path?: string;
 }
 
 type Next = (err?: unknown) => void;
@@ -91,6 +98,7 @@ export function workGate(options: WorkGateOptions) {
     maxChars = 4000,
     challengeTtlSeconds = 300,
     passTtlSeconds = 600,
+    passScope = "site",
     verify,
     onWork,
   } = options;
@@ -123,7 +131,8 @@ export function workGate(options: WorkGateOptions) {
     if (response.length > challenge.maxChars) return `Response longer than ${challenge.maxChars} characters.`;
 
     const work: Work = { challengeId: challenge.id, prompt: challenge.prompt, response, resource };
-    if (verify && !(await verify(work))) return "Response rejected by verifier.";
+    const verdict = verify ? await verify(work) : true;
+    if (verdict !== true) return typeof verdict === "string" ? verdict : "Response rejected by verifier.";
 
     redeem(challenge);
     return work;
@@ -131,10 +140,11 @@ export function workGate(options: WorkGateOptions) {
 
   return async function workGateMiddleware(req: IncomingMessage, res: ServerResponse, next: Next) {
     try {
-      const pass = req.headers[PASS_HEADER.toLowerCase()];
-      if (typeof pass === "string") {
-        const payload = verifyToken<PassPayload>(pass, secret);
-        if (payload?.typ === "pass" && payload.exp > now()) return next();
+      const path = (req.url ?? "/").split("?")[0];
+      const passes = req.headers[PASS_HEADER.toLowerCase()];
+      for (const pass of typeof passes === "string" ? passes.split(",") : []) {
+        const payload = verifyToken<PassPayload>(pass.trim(), secret);
+        if (payload?.typ === "pass" && payload.exp > now() && (!payload.path || payload.path === path)) return next();
       }
 
       let error: string | undefined;
@@ -145,6 +155,7 @@ export function workGate(options: WorkGateOptions) {
           await onWork?.(result);
           if (passTtlSeconds > 0) {
             const passPayload: PassPayload = { typ: "pass", sub: result.challengeId, exp: now() + passTtlSeconds };
+            if (passScope === "resource") passPayload.path = path;
             res.setHeader(PASS_HEADER, signToken(passPayload, secret));
           }
           return next();
@@ -166,6 +177,7 @@ export function workGate(options: WorkGateOptions) {
       };
       const body: WorkRequired = {
         protocol: PROTOCOL,
+        id,
         prompt: challenge.prompt,
         control: question,
         challenge: signToken(challenge, secret),

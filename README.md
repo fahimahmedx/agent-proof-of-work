@@ -5,6 +5,9 @@ requests with `HTTP 402 Payment Required`. Instead of asking for a wallet paymen
 prompt. The agent pays with compute, and the site keeps the answer. A control question with a known answer, as in
 reCAPTCHA v1, checks that an LLM is actually doing the work.
 
+The work can be bigger than one answer. The example site charges one **pull request that improves the site's design**
+for each premium article, and verifies the pull request on GitHub before unlocking it.
+
 ```
 Agent                                   Website (workGate middleware)
   │ GET /article                            │
@@ -46,7 +49,39 @@ Agent                                   Website (workGate middleware)
    custom `verify` hook (e.g. an LLM judge). If everything passes, it hands the answer to `onWork` and serves the
    request.
 4. **Pass.** On success, the response includes `X-Work-Pass`, a signed pass valid for `passTtlSeconds` (default 10 min).
-   Sending it back skips new work until it expires. Set `passTtlSeconds: 0` to charge one unit of work per request.
+   Sending it back skips new work until it expires; clients holding several passes send them comma-separated. With
+   `passScope: "resource"` a pass unlocks only the path it was earned on. Set `passTtlSeconds: 0` to charge one unit of
+   work per request.
+
+The 402 body also includes the challenge `id`, so tasks can ask the agent to reference it.
+
+## Paying with a pull request
+
+`pullRequestWork` turns the task into "open a pull request against this repo" and supplies the matching `verify`:
+
+```ts
+import { pullRequestWork } from "agent-proof-of-work/github";
+
+app.get("/articles/premium/:slug", workGate({
+  secret: process.env.PREMIUM_SECRET!,   // use a different secret per gate
+  ...pullRequestWork({
+    repo: "fahimahmedx/agent-proof-of-work",
+    task: "Improve the design of this website.",
+    paths: ["examples/site/"],
+    token: process.env.GITHUB_TOKEN,     // optional for public repos
+  }),
+  passScope: "resource",                 // one pull request buys one article
+  passTtlSeconds: 30 * 24 * 60 * 60,
+}), renderArticle);
+```
+
+The agent opens a pull request with the challenge `id` in its description, then sends the pull request URL as its
+`response` (plus the control answer). The server checks with the GitHub API that the pull request:
+
+- targets the configured repository and is open (or merged)
+- contains this challenge's `id` in its description, so nobody can claim someone else's pull request
+- changes at least one file under `paths`
+- hasn't paid for access before, so editing an old pull request's description doesn't work
 
 The `instructions` field explains the protocol in plain English, so an agent with a generic HTTP tool can comply
 without this SDK.
@@ -84,7 +119,7 @@ const res = await workFetch("https://site.example/article"); // 402s are solved 
 ```sh
 npm install
 npm test             # end-to-end tests against a real HTTP server
-npm run site         # example gated site on :3000
+npm run site         # example blog on :3000: free articles cost an LLM answer, premium ones a design PR
 npm run agent        # example agent: OpenAI-compatible API if OPENAI_API_KEY is set
                      # (OPENAI_BASE_URL, OPENAI_MODEL), otherwise a local SmolLM2-360M model
 ```
@@ -92,12 +127,13 @@ npm run agent        # example agent: OpenAI-compatible API if OPENAI_API_KEY is
 Without the SDK:
 
 ```sh
-curl -s localhost:3000/ > challenge.json   # read .prompt and .control
+URL=localhost:3000/articles/free/paying-with-compute
+curl -s $URL > challenge.json   # read .prompt and .control (and .id for pull request tasks)
 CH=$(jq -r .challenge challenge.json)
 PROOF=$(jq -cn --arg c "$CH" --arg r "<answer to prompt>" --arg a "<answer to control>" \
   '{challenge:$c,response:$r,controlAnswer:$a}' \
   | base64 -w0 | tr '+/' '-_' | tr -d '=')
-curl -i localhost:3000/ -H "X-Work: $PROOF"
+curl -i $URL -H "X-Work: $PROOF"
 ```
 
 ## MVP limitations
@@ -107,5 +143,8 @@ curl -i localhost:3000/ -H "X-Work: $PROOF"
 - **The control question is labeled.** reCAPTCHA hides which word is the control, so a solver has to answer both
   honestly. Here an agent can answer the control correctly and send filler for the prompt, which only has to pass the
   length check. The next step is to shuffle questions that look alike, or to add an LLM judge in `verify`.
-- Replay protection is an in-memory map, so it covers a single server process.
+- **Nothing checks that a design pull request is actually better.** Access is granted once a qualifying pull request
+  is open; a maintainer still decides whether to merge it. Stricter options: require the pull request to be merged
+  before unlocking, or have an LLM judge screenshots of the before and after.
+- Replay protection (challenges and redeemed pull requests) is in memory, so it covers a single server process.
 - Passes are bearer tokens that aren't bound to a client.

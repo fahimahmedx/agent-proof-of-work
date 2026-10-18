@@ -1,14 +1,15 @@
 {
   "name": "agent-proof-of-work",
   "version": "0.1.0",
-  "description": "Gate a website behind LLM work instead of payment: agents pay for access by answering an LLM prompt.",
+  "description": "Gate a website behind work instead of payment: agents pay for access by answering an LLM prompt or opening a pull request.",
   "type": "module",
   "exports": {
     "./server": "./src/server.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./github": "./src/github.ts"
   },
   "scripts": {
-    "site": "node examples/site.ts",
+    "site": "node examples/site/server.ts",
     "agent": "node examples/agent.ts",
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc"

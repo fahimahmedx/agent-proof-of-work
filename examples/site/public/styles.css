@@ -1,0 +1,26 @@
+body {
+  font-family: serif;
+  margin: 8px;
+}
+
+.site-header a {
+  font-weight: bold;
+}
+
+.articles {
+  padding-left: 20px;
+}
+
+.article-card {
+  margin-bottom: 16px;
+}
+
+.price {
+  font-size: small;
+  color: gray;
+}
+
+.site-footer {
+  margin-top: 32px;
+  font-size: small;
+}

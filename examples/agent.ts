@@ -39,7 +39,8 @@ const workFetch = withWork(async (prompt, challenge) => {
   return answer;
 });
 
-for (const path of ["/", "/articles/1"]) {
-  const res = await workFetch(new URL(path, site));
-  console.log(`[agent] GET ${path} -> ${res.status}`, await res.json());
-}
+// Free articles cost one LLM answer; premium ones need a design pull request (see README).
+const path = "/articles/free/paying-with-compute";
+const res = await workFetch(new URL(path, site));
+const html = await res.text();
+console.log(`[agent] GET ${path} -> ${res.status}`, html.match(/<article>.*<\/article>/s)?.[0] ?? html);
