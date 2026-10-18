@@ -61,6 +61,8 @@ export function pullRequestWork(options: PullRequestWorkOptions) {
       `Reply with only the pull request URL.`,
     minChars: 1,
     maxChars: 200,
+    // Writing a pull request takes far longer than answering a prompt.
+    challengeTtlSeconds: 60 * 60,
     verify,
   } satisfies Partial<WorkGateOptions>;
 }
