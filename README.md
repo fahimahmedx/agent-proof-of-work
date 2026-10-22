@@ -22,6 +22,9 @@ Agent                                   Website (workGate middleware)
   │────────────────────────────────────────▶│ valid pass → 200 (no new work until it expires)
 ```
 
+**D402** (`d402/`) is a variant where the work is labeling chatbot traces for an eval lab, which pays the website
+directly. It includes a Claude Code plugin and a runnable demo; see [d402/README.md](d402/README.md).
+
 ## Protocol (`agent-proof-of-work/0.2`)
 
 1. **Challenge.** Any request without valid work gets `402` with a JSON body:

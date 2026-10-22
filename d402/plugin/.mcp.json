@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "d402": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/tools/server.ts"],
+      "env": {
+        "D402_ALLOWED_ORIGINS": "${D402_ALLOWED_ORIGINS:-http://localhost:4020}",
+        "D402_WORKER_DEADLINE_MS": "${D402_WORKER_DEADLINE_MS:-120000}"
+      }
+    }
+  }
+}

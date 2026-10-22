@@ -12,7 +12,10 @@
     "site": "node examples/site/server.ts",
     "agent": "node examples/agent.ts",
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "d402": "node d402/server/main.ts",
+    "d402:demo": "node d402/demo.ts",
+    "d402:lab": "node d402/lab.ts"
   },
   "license": "MIT",
   "dependencies": {

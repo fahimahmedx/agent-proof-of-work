@@ -1,0 +1,9 @@
+{
+  "name": "d402",
+  "version": "0.1.0",
+  "description": "Earn access to D402-protected pages by labeling one batch of chatbot traces in a fresh, tool-free subagent.",
+  "author": { "name": "agent-proof-of-work" },
+  "repository": "https://github.com/fahimahmedx/agent-proof-of-work",
+  "license": "MIT",
+  "keywords": ["402", "paywall", "evals", "labeling"]
+}
